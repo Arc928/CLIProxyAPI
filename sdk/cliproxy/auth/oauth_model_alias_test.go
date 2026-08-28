@@ -178,6 +178,14 @@ func TestOAuthModelAliasChannel_Kimi(t *testing.T) {
 	}
 }
 
+func TestOAuthModelAliasChannel_CodeBuddy(t *testing.T) {
+	t.Parallel()
+
+	if got := OAuthModelAliasChannel("codebuddy", "oauth"); got != "codebuddy" {
+		t.Fatalf("OAuthModelAliasChannel() = %q, want %q", got, "codebuddy")
+	}
+}
+
 func TestOAuthModelAliasChannel_PluginProvider(t *testing.T) {
 	t.Parallel()
 

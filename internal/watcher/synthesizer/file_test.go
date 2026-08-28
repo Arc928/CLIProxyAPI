@@ -174,6 +174,44 @@ func TestFileSynthesizer_Synthesize_LegacyKimiFingerprintProfile(t *testing.T) {
 	}
 }
 
+func TestFileSynthesizer_Synthesize_CodeBuddy(t *testing.T) {
+	tempDir := t.TempDir()
+	authData := map[string]any{
+		"type":          "codebuddy",
+		"access_token":  "cb-access",
+		"refresh_token": "cb-refresh",
+		"uid":           "uid-cb",
+		"nickname":      "Arc",
+		"domain":        "www.codebuddy.cn",
+	}
+	data, errMarshal := json.Marshal(authData)
+	if errMarshal != nil {
+		t.Fatalf("marshal codebuddy auth: %v", errMarshal)
+	}
+	if err := os.WriteFile(filepath.Join(tempDir, "codebuddy-uid-cb.json"), data, 0644); err != nil {
+		t.Fatalf("failed to write codebuddy auth file: %v", err)
+	}
+
+	auths, err := NewFileSynthesizer().Synthesize(&SynthesisContext{
+		Config:      &config.Config{},
+		AuthDir:     tempDir,
+		Now:         time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+		IDGenerator: NewStableIDGenerator(),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(auths) != 1 {
+		t.Fatalf("expected 1 auth, got %d", len(auths))
+	}
+	if auths[0].Provider != "codebuddy" {
+		t.Fatalf("provider = %q, want codebuddy", auths[0].Provider)
+	}
+	if auths[0].Metadata["access_token"] != "cb-access" {
+		t.Fatalf("access_token = %v", auths[0].Metadata["access_token"])
+	}
+}
+
 func TestFileSynthesizer_Synthesize_IgnoresGeminiProviderFile(t *testing.T) {
 	tempDir := t.TempDir()
 

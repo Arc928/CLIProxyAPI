@@ -9,6 +9,26 @@ func TestGetStaticModelDefinitionsByChannelSupportsGeminiInteractions(t *testing
 	}
 }
 
+func TestGetCodeBuddyModels(t *testing.T) {
+	models := GetCodeBuddyModels()
+	if len(models) == 0 {
+		t.Fatal("GetCodeBuddyModels() returned no models")
+	}
+	foundAuto := false
+	for _, model := range models {
+		if model != nil && model.ID == "auto" && model.Type == "codebuddy" {
+			foundAuto = true
+			break
+		}
+	}
+	if !foundAuto {
+		t.Fatal("GetCodeBuddyModels() missing auto model")
+	}
+	if got := GetStaticModelDefinitionsByChannel("codebuddy"); len(got) != len(models) {
+		t.Fatalf("GetStaticModelDefinitionsByChannel(codebuddy) = %d, want %d", len(got), len(models))
+	}
+}
+
 func TestModelOverrideHeadersFromEmbeddedModels(t *testing.T) {
 	const wantUA = "codex-tui/0.144.0 (Mac OS 26.5.1; arm64) iTerm.app/3.6.11 (codex-tui; 0.144.0)"
 	got := ModelOverrideHeaders("gpt-5.6-luna")

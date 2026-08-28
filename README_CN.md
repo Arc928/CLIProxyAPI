@@ -121,12 +121,13 @@ PackyCode 为本软件用户提供了特别优惠：使用<a href="https://www.p
 - 函数调用/工具支持
 - 多模态输入（文本、图片）
 - 多账户支持与轮询负载均衡（Gemini、OpenAI、Claude、Grok）
-- 简单的 CLI 身份验证流程（Gemini、OpenAI、Claude、Grok）
+- 简单的 CLI 身份验证流程（Gemini、OpenAI、Claude、Grok、Kimi、CodeBuddy）
 - 支持 Gemini AIStudio API 密钥
 - 支持 AI Studio Build 多账户轮询
 - 支持 Claude Code 多账户轮询
 - 支持 OpenAI Codex 多账户轮询
 - 支持 Grok Build 多账户轮询
+- 支持 CodeBuddy 订阅会话重放（导入本地桌面凭证或浏览器登录）
 - 通过配置接入上游 OpenAI 兼容提供商（例如 OpenRouter）
 - 可复用的 Go SDK（见 `docs/sdk-usage_CN.md`）
 

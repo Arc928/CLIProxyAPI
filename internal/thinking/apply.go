@@ -26,6 +26,7 @@ var nativeProviderAppliers = map[string]ProviderApplier{
 	"codex":       nil,
 	"antigravity": nil,
 	"kimi":        nil,
+	"codebuddy":   nil,
 	"xai":         nil,
 }
 
@@ -541,7 +542,7 @@ func extractThinkingConfig(body []byte, provider string) ThinkingConfig {
 		return extractGeminiConfig(body, provider)
 	case "interactions":
 		return extractInteractionsConfig(body)
-	case "openai":
+	case "openai", "codebuddy":
 		return extractOpenAIConfig(body)
 	case "codex", "xai":
 		return extractCodexConfig(body)

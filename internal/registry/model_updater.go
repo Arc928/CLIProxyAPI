@@ -121,6 +121,10 @@ func tryRefreshModels(ctx context.Context, label string) {
 		return
 	}
 
+	if oldData != nil && len(parsed.CodeBuddy) == 0 && len(oldData.CodeBuddy) > 0 {
+		parsed.CodeBuddy = cloneModelInfos(oldData.CodeBuddy)
+	}
+
 	// Detect changes before updating store.
 	changed := detectChangedProviders(oldData, parsed)
 
@@ -214,6 +218,7 @@ func detectChangedProviders(oldData, newData *staticModelsJSON) []string {
 		{"codex", oldData.CodexPlus, newData.CodexPlus},
 		{"codex", oldData.CodexPro, newData.CodexPro},
 		{"kimi", oldData.Kimi, newData.Kimi},
+		{"codebuddy", oldData.CodeBuddy, newData.CodeBuddy},
 		{"antigravity", oldData.Antigravity, newData.Antigravity},
 		{"xai", oldData.XAI, newData.XAI},
 	}

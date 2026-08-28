@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/auth/antigravity"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/auth/claude"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/auth/codebuddy"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/auth/codex"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/auth/kimi"
 	xaiauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/xai"
@@ -714,6 +715,102 @@ func (h *Handler) RequestKimiToken(c *gin.Context) {
 	if deviceFlow.ExpiresIn > 0 {
 		response["expires_in"] = deviceFlow.ExpiresIn
 	}
+	c.JSON(200, response)
+}
+
+func (h *Handler) RequestCodeBuddyToken(c *gin.Context) {
+	ctx := context.Background()
+	ctx = PopulateAuthContext(ctx, c)
+
+	fmt.Println("Initializing CodeBuddy authentication...")
+
+	state := fmt.Sprintf("cba-%d", time.Now().UnixNano())
+	codebuddyAuth := codebuddy.NewAuth(h.cfg)
+	authState, errStart := codebuddyAuth.StartLogin(ctx)
+	if errStart != nil {
+		log.Errorf("Failed to generate CodeBuddy authorization URL: %v", errStart)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate authorization url"})
+		return
+	}
+
+	RegisterOAuthSession(state, "codebuddy")
+
+	go func() {
+		pollCtx, cancelPoll := context.WithCancel(ctx)
+		defer cancelPoll()
+		go watchOAuthSessionCancel(pollCtx, cancelPoll, state, "codebuddy")
+
+		fmt.Println("Waiting for CodeBuddy authentication...")
+		authBundle, errWait := codebuddyAuth.WaitForLogin(pollCtx, authState)
+		if errWait != nil {
+			if !IsOAuthSessionPending(state, "codebuddy") {
+				return
+			}
+			SetOAuthSessionError(state, oauthSessionErrorWithCause("Authentication failed", errWait))
+			fmt.Printf("Authentication failed: %v\n", errWait)
+			return
+		}
+		if !IsOAuthSessionPending(state, "codebuddy") {
+			return
+		}
+
+		tokenStorage := codebuddyAuth.CreateTokenStorage(authBundle)
+		metadata := map[string]any{
+			"type":      "codebuddy",
+			"timestamp": time.Now().UnixMilli(),
+		}
+		if authBundle != nil && authBundle.TokenData != nil {
+			metadata["access_token"] = authBundle.TokenData.AccessToken
+			metadata["refresh_token"] = authBundle.TokenData.RefreshToken
+			metadata["token_type"] = authBundle.TokenData.TokenType
+			metadata["scope"] = authBundle.TokenData.Scope
+			metadata["domain"] = authBundle.TokenData.Domain
+			if authBundle.TokenData.ExpiresAt > 0 {
+				metadata["expired"] = time.Unix(authBundle.TokenData.ExpiresAt, 0).UTC().Format(time.RFC3339)
+			}
+		}
+		if authBundle != nil && authBundle.Account != nil {
+			metadata["uid"] = authBundle.Account.UID
+			metadata["nickname"] = authBundle.Account.Nickname
+			metadata["enterprise_id"] = authBundle.Account.EnterpriseID
+		}
+		if authBundle != nil && strings.TrimSpace(authBundle.APIBase) != "" {
+			metadata["api_base_url"] = authBundle.APIBase
+		}
+
+		fileName := fmt.Sprintf("codebuddy-%d.json", time.Now().UnixMilli())
+		if authBundle != nil && authBundle.Account != nil && strings.TrimSpace(authBundle.Account.UID) != "" {
+			fileName = fmt.Sprintf("codebuddy-%s.json", strings.TrimSpace(authBundle.Account.UID))
+		}
+		label := "CodeBuddy User"
+		if authBundle != nil && authBundle.Account != nil && strings.TrimSpace(authBundle.Account.Nickname) != "" {
+			label = strings.TrimSpace(authBundle.Account.Nickname)
+		}
+		record := &coreauth.Auth{
+			ID:       fileName,
+			Provider: "codebuddy",
+			FileName: fileName,
+			Label:    label,
+			Storage:  tokenStorage,
+			Metadata: metadata,
+		}
+		if errGuard := guardOAuthSessionPendingForSave(state, "codebuddy"); errGuard != nil {
+			return
+		}
+		savedPath, errSave := h.saveTokenRecord(ctx, record)
+		if errSave != nil {
+			log.Errorf("Failed to save authentication tokens: %v", errSave)
+			SetOAuthSessionError(state, "Failed to save authentication tokens")
+			return
+		}
+
+		fmt.Printf("Authentication successful! Token saved to %s\n", savedPath)
+		fmt.Println("You can now use CodeBuddy services through this CLI")
+		CompleteOAuthSession(state)
+	}()
+
+	response := gin.H{"status": "ok", "url": authState.AuthURL, "state": state, "flow": "device"}
+	response["expires_in"] = int(15 * 60)
 	c.JSON(200, response)
 }
 
