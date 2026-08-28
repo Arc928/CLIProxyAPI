@@ -235,3 +235,51 @@ func TestCreateTokenStorage(t *testing.T) {
 		t.Fatalf("expired = %q", storage.Expired)
 	}
 }
+
+func TestIsPendingEnvelopeLoginInProgress(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{name: "login in progress", body: `{"code":11217,"msg":"11217:login ing...","requestId":"r-1"}`, want: true},
+		{name: "login expired", body: `{"code":11200,"msg":"11200:login expired","requestId":"r-2"}`, want: false},
+		{name: "empty data", body: `{"code":0,"data":{}}`, want: true},
+	}
+	for _, tt := range tests {
+		if got := isPendingEnvelope([]byte(tt.body)); got != tt.want {
+			t.Errorf("%s: isPendingEnvelope = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestPollTokenRetriesWhileLoginPending(t *testing.T) {
+	var polls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Path, "/v2/plugin/auth/token") {
+			http.NotFound(w, r)
+			return
+		}
+		if atomic.AddInt32(&polls, 1) == 1 {
+			_, _ = io.WriteString(w, `{"code":11217,"msg":"11217:login ing...","requestId":"r-1"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"code":0,"data":{"accessToken":"access-after-login","refreshToken":"refresh-after-login","expiresIn":3600,"tokenType":"Bearer"}}`)
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewClient(&config.Config{}, server.URL, "direct")
+	client.httpClient = server.Client()
+
+	token, errPoll := client.PollToken(context.Background(), "st-1")
+	if errPoll != nil {
+		t.Fatalf("PollToken: %v", errPoll)
+	}
+	if token.AccessToken != "access-after-login" {
+		t.Fatalf("access token = %q", token.AccessToken)
+	}
+	if got := atomic.LoadInt32(&polls); got != 2 {
+		t.Fatalf("polls = %d, want 2", got)
+	}
+}

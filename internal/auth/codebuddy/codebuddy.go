@@ -421,6 +421,12 @@ func unwrapData(body []byte) (gjson.Result, error) {
 	return root, nil
 }
 
+// authPendingCodes lists business codes that CodeBuddy returns with HTTP 200 while the
+// browser login is still in progress. Polling must keep waiting instead of failing.
+var authPendingCodes = map[int64]struct{}{
+	11217: {}, // "11217:login ing..."
+}
+
 func isPendingEnvelope(body []byte) bool {
 	if !gjson.ValidBytes(body) {
 		return false
@@ -435,6 +441,9 @@ func isPendingEnvelope(body []byte) bool {
 		data := root.Get("data")
 		return !data.Exists() || data.Type == gjson.Null || (data.IsObject() && len(data.Map()) == 0)
 	default:
+		if _, ok := authPendingCodes[code.Int()]; ok {
+			return true
+		}
 		msg := strings.ToLower(firstNonEmpty(root.Get("msg").String(), root.Get("message").String()))
 		return strings.Contains(msg, "pending") || strings.Contains(msg, "retry") || strings.Contains(msg, "not ready")
 	}
