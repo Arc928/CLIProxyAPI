@@ -49,6 +49,59 @@ func TestAggregateOpenAIChatSSE(t *testing.T) {
 	}
 }
 
+func TestCodeBuddyReasoningCoalescer(t *testing.T) {
+	var c codeBuddyReasoningCoalescer
+	if got := c.Push([]byte(`data: {"choices":[{"delta":{"reasoning_content":"The "}}]}`)); len(got) != 0 {
+		t.Fatalf("first reasoning chunk = %v, want buffered", got)
+	}
+	if got := c.Push([]byte(`data: {"choices":[{"delta":{"reasoning_content":"answer."}}]}`)); len(got) != 0 {
+		t.Fatalf("second reasoning chunk = %v, want buffered", got)
+	}
+	got := c.Push([]byte(`data: {"choices":[{"delta":{"content":"done"}}]}`))
+	if len(got) != 2 {
+		t.Fatalf("flushed chunks = %d, want 2", len(got))
+	}
+	if gjson.GetBytes(bytes.TrimSpace(bytes.TrimPrefix(got[0], []byte("data:"))), "choices.0.delta.reasoning_content").String() != "The answer." {
+		t.Fatalf("merged reasoning chunk = %s", got[0])
+	}
+	if !bytes.Contains(got[1], []byte(`"content":"done"`)) {
+		t.Fatalf("content chunk = %s", got[1])
+	}
+}
+
+// Hy4 emits an empty "tool_calls":[] in every delta; it must not block coalescing.
+func TestCodeBuddyReasoningCoalescerIgnoresEmptyToolCalls(t *testing.T) {
+	var c codeBuddyReasoningCoalescer
+	chunk := func(text string) []byte {
+		return []byte(`data: {"id":"cmb-1","model":"hy4-preview","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"","reasoning_content":"` + text + `","function_call":null,"refusal":"","tool_calls":[],"extra_fields":null},"logprobs":null,"finish_reason":""}],"usage":null}`)
+	}
+	if got := c.Push(chunk("We")); len(got) != 0 {
+		t.Fatalf("first chunk = %v, want buffered", got)
+	}
+	if got := c.Push(chunk(" need")); len(got) != 0 {
+		t.Fatalf("second chunk = %v, want buffered", got)
+	}
+	got := c.Flush()
+	if len(got) != 1 {
+		t.Fatalf("flushed = %d, want 1", len(got))
+	}
+	if merged := gjson.GetBytes(codeBuddySSEPayload(got[0]), "choices.0.delta.reasoning_content").String(); merged != "We need" {
+		t.Fatalf("merged reasoning = %q, want %q", merged, "We need")
+	}
+}
+
+func TestCodeBuddyReasoningCoalescerFlushesDone(t *testing.T) {
+	var c codeBuddyReasoningCoalescer
+	_ = c.Push([]byte(`data: {"choices":[{"delta":{"reasoning":"one"}}]}`))
+	got := c.Push([]byte("data: [DONE]"))
+	if len(got) != 2 || !bytes.Contains(got[0], []byte(`"reasoning":"one"`)) || !bytes.Equal(got[1], []byte("data: [DONE]")) {
+		t.Fatalf("done flush = %v", got)
+	}
+	if got := c.Flush(); len(got) != 0 {
+		t.Fatalf("buffer after done = %v", got)
+	}
+}
+
 func TestCodeBuddyExecutorExecuteInjectsHeaders(t *testing.T) {
 	var gotAuth, gotUser, gotDomain, gotURL string
 	var body []byte

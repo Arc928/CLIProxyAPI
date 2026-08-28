@@ -174,12 +174,25 @@ func (e *CodeBuddyExecutor) ExecuteStream(ctx context.Context, auth *cliproxyaut
 		claudeInputTokens := helps.NewClaudeInputTokenState(from, to, responseFormat, originalPayload)
 		var param any
 		var streamUsage helps.StreamUsageBuffer
+		var reasoningCoalescer codeBuddyReasoningCoalescer
 		defer streamUsage.Publish(ctx, reporter)
 		for scanner.Scan() {
 			line := scanner.Bytes()
 			helps.AppendAPIResponseChunk(ctx, e.cfg, line)
 			streamUsage.ObserveOpenAIStream(line)
-			chunks := helps.TranslateStreamWithClaudeInputTokens(ctx, to, responseFormat, req.Model, opts.OriginalRequest, body, bytes.Clone(line), &param, claudeInputTokens)
+			for _, coalesced := range reasoningCoalescer.Push(line) {
+				chunks := helps.TranslateStreamWithClaudeInputTokens(ctx, to, responseFormat, req.Model, opts.OriginalRequest, body, coalesced, &param, claudeInputTokens)
+				for i := range chunks {
+					select {
+					case out <- cliproxyexecutor.StreamChunk{Payload: chunks[i]}:
+					case <-ctx.Done():
+						return
+					}
+				}
+			}
+		}
+		for _, coalesced := range reasoningCoalescer.Flush() {
+			chunks := helps.TranslateStreamWithClaudeInputTokens(ctx, to, responseFormat, req.Model, opts.OriginalRequest, body, coalesced, &param, claudeInputTokens)
 			for i := range chunks {
 				select {
 				case out <- cliproxyexecutor.StreamChunk{Payload: chunks[i]}:
@@ -489,6 +502,101 @@ func aggregateOpenAIChatSSE(r io.Reader) ([]byte, error) {
 		out, _ = sjson.SetRawBytes(out, "usage", []byte(usageRaw))
 	}
 	return out, nil
+}
+
+const codeBuddyReasoningBatchBytes = 512
+
+// codeBuddyReasoningCoalescer combines the very small reasoning deltas emitted
+// by Hy4 into usable stream chunks while preserving normal OpenAI chunk order.
+type codeBuddyReasoningCoalescer struct {
+	pending      []byte
+	reasoningKey string
+	length       int
+}
+
+func (c *codeBuddyReasoningCoalescer) Push(line []byte) [][]byte {
+	if len(bytes.TrimSpace(line)) == 0 {
+		return nil
+	}
+	text, key, ok := codeBuddyReasoningDelta(line)
+	if !ok {
+		return c.flushWith(line)
+	}
+	if len(c.pending) == 0 {
+		c.pending = bytes.Clone(line)
+		c.reasoningKey = key
+		c.length = len(text)
+	} else if c.reasoningKey == key {
+		payload := codeBuddySSEPayload(c.pending)
+		updated, err := sjson.SetBytes(payload, "choices.0.delta."+key, gjson.GetBytes(payload, "choices.0.delta."+key).String()+text)
+		if err != nil {
+			return c.flushWith(line)
+		}
+		c.pending = append([]byte("data: "), updated...)
+		c.length += len(text)
+	} else {
+		out := c.Flush()
+		c.pending = bytes.Clone(line)
+		c.reasoningKey = key
+		c.length = len(text)
+		return out
+	}
+	if c.length >= codeBuddyReasoningBatchBytes {
+		return c.Flush()
+	}
+	return nil
+}
+
+func (c *codeBuddyReasoningCoalescer) flushWith(line []byte) [][]byte {
+	out := c.Flush()
+	if len(bytes.TrimSpace(line)) > 0 {
+		out = append(out, bytes.Clone(line))
+	}
+	return out
+}
+
+func (c *codeBuddyReasoningCoalescer) Flush() [][]byte {
+	if len(c.pending) == 0 {
+		return nil
+	}
+	out := [][]byte{c.pending}
+	c.pending = nil
+	c.reasoningKey = ""
+	c.length = 0
+	return out
+}
+
+func codeBuddySSEPayload(line []byte) []byte {
+	trimmed := bytes.TrimSpace(line)
+	if bytes.HasPrefix(trimmed, []byte("data:")) {
+		return bytes.TrimSpace(trimmed[len("data:"):])
+	}
+	return trimmed
+}
+
+func codeBuddyReasoningDelta(line []byte) (string, string, bool) {
+	payload := codeBuddySSEPayload(line)
+	if !gjson.ValidBytes(payload) || bytes.Equal(payload, []byte("[DONE]")) {
+		return "", "", false
+	}
+	choices := gjson.GetBytes(payload, "choices")
+	if !choices.IsArray() || len(choices.Array()) != 1 {
+		return "", "", false
+	}
+	delta := choices.Get("0.delta")
+	toolCalls := delta.Get("tool_calls")
+	if !delta.Exists() ||
+		(delta.Get("content").Type == gjson.String && delta.Get("content").String() != "") ||
+		(toolCalls.Exists() && len(toolCalls.Array()) > 0) {
+		return "", "", false
+	}
+	for _, key := range []string{"reasoning_content", "reasoning"} {
+		value := delta.Get(key)
+		if value.Type == gjson.String && value.String() != "" {
+			return value.String(), key, true
+		}
+	}
+	return "", "", false
 }
 
 func codeBuddyUpstreamError(data []byte) error {
