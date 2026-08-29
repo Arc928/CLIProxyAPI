@@ -87,7 +87,7 @@ func (e *CodeBuddyExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth
 	}
 	reporter.SetTranslatedReasoningEffort(body, e.Identifier())
 
-	httpResp, _, errDo := e.doChat(ctx, auth, body, true)
+	httpResp, _, errDo := e.doChat(ctx, auth, body, true, reporter)
 	if errDo != nil {
 		return resp, errDo
 	}
@@ -142,7 +142,7 @@ func (e *CodeBuddyExecutor) ExecuteStream(ctx context.Context, auth *cliproxyaut
 	}
 	reporter.SetTranslatedReasoningEffort(body, e.Identifier())
 
-	httpResp, _, errDo := e.doChat(ctx, auth, body, true)
+	httpResp, _, errDo := e.doChat(ctx, auth, body, true, reporter)
 	if errDo != nil {
 		return nil, errDo
 	}
@@ -322,7 +322,7 @@ func (e *CodeBuddyExecutor) buildChatBody(ctx context.Context, req cliproxyexecu
 	return body, nil
 }
 
-func (e *CodeBuddyExecutor) doChat(ctx context.Context, auth *cliproxyauth.Auth, body []byte, stream bool) (*http.Response, *http.Request, error) {
+func (e *CodeBuddyExecutor) doChat(ctx context.Context, auth *cliproxyauth.Auth, body []byte, stream bool, reporter *helps.UsageReporter) (*http.Response, *http.Request, error) {
 	url := codebuddyauth.ChatCompletionsURL(codeBuddyAPIBase(auth))
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
@@ -352,6 +352,7 @@ func (e *CodeBuddyExecutor) doChat(ctx context.Context, auth *cliproxyauth.Auth,
 		AuthValue: authValue,
 	})
 	httpClient := helps.NewProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
+	httpClient = reporter.TrackHTTPClient(httpClient)
 	httpResp, errDo := httpClient.Do(httpReq)
 	if errDo != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, errDo)

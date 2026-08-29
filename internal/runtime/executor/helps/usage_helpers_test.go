@@ -135,6 +135,27 @@ func TestParseOpenAIUsageNormalizesCacheCreationAlias(t *testing.T) {
 	}
 }
 
+// CodeBuddy reports prompt-cache hits in a top-level field and leaves the
+// OpenAI-standard cached_tokens bucket at zero.
+func TestParseOpenAIUsageFallsBackToPromptCacheHitTokens(t *testing.T) {
+	data := []byte(`{"usage":{"prompt_tokens":2820,"completion_tokens":49,"total_tokens":2869,"prompt_tokens_details":{"cached_tokens":0},"prompt_cache_hit_tokens":2816,"prompt_cache_miss_tokens":4}}`)
+	detail := ParseOpenAIUsage(data)
+	if detail.CachedTokens != 2816 {
+		t.Fatalf("cached tokens = %d, want 2816", detail.CachedTokens)
+	}
+	if detail.CacheReadTokens != 2816 {
+		t.Fatalf("cache read tokens = %d, want 2816", detail.CacheReadTokens)
+	}
+}
+
+func TestParseOpenAIUsagePrefersStandardCachedTokens(t *testing.T) {
+	data := []byte(`{"usage":{"prompt_tokens":100,"completion_tokens":2,"total_tokens":102,"prompt_tokens_details":{"cached_tokens":64},"prompt_cache_hit_tokens":0}}`)
+	detail := ParseOpenAIUsage(data)
+	if detail.CachedTokens != 64 {
+		t.Fatalf("cached tokens = %d, want 64", detail.CachedTokens)
+	}
+}
+
 func TestParseOpenAIUsageIgnoresNullUsage(t *testing.T) {
 	data := []byte(`{"usage":null}`)
 	detail := ParseOpenAIUsage(data)

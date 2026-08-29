@@ -619,6 +619,13 @@ func parseOpenAIStyleUsageNode(usageNode gjson.Result) usage.Detail {
 	if !cached.Exists() {
 		cached = usageNode.Get("input_tokens_details.cached_tokens")
 	}
+	if !cached.Exists() || cached.Int() == 0 {
+		// CodeBuddy reports the real prompt-cache hit count in a top-level field
+		// and keeps the OpenAI-standard cached_tokens bucket at zero.
+		if hit := usageNode.Get("prompt_cache_hit_tokens"); hit.Exists() && hit.Int() > 0 {
+			cached = hit
+		}
+	}
 	if cached.Exists() {
 		detail.CachedTokens = cached.Int()
 		detail.CacheReadTokens = cached.Int()
