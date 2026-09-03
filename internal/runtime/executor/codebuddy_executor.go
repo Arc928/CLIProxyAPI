@@ -406,6 +406,7 @@ func (e *CodeBuddyExecutor) buildChatBody(ctx context.Context, req cliproxyexecu
 	requestedModel := helps.PayloadRequestedModel(opts, req.Model)
 	requestPath := helps.PayloadRequestPath(opts)
 	body = helps.ApplyPayloadConfigWithRequest(e.cfg, baseModel, to.String(), from.String(), "", body, originalTranslated, requestedModel, requestPath, opts.Headers)
+	body = helps.SanitizeCodeBuddySystemPrompts(body)
 	return body, nil
 }
 
