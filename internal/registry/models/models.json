@@ -3967,12 +3967,12 @@
     {
       "id": "hy4-preview",
       "object": "model",
-      "created": 1756339200,
+      "created": 1787897375,
       "owned_by": "tencent",
       "type": "codebuddy",
       "display_name": "Hunyuan 4 Preview",
-      "description": "Tencent Hunyuan 4 preview coding model",
-      "context_length": 192000,
+      "description": "Tencent Hy4 preview natively multimodal MoE model for coding agents and complex tool-use workflows (49B active / 770B total parameters)",
+      "context_length": 1048576,
       "max_completion_tokens": 64000,
       "thinking": {
         "zero_allowed": false,
@@ -3995,6 +3995,22 @@
         "levels": ["low", "high", "max"]
       },
       "supportedInputModalities": ["text", "image"],
+      "supportedOutputModalities": ["text"]
+    },
+    {
+      "id": "glm-5.3-flash",
+      "object": "model",
+      "created": 1787702400,
+      "owned_by": "zhipu",
+      "type": "codebuddy",
+      "display_name": "GLM 5.3 Flash",
+      "context_length": 1000000,
+      "max_completion_tokens": 131072,
+      "thinking": {
+        "zero_allowed": false,
+        "levels": ["low", "high", "max"]
+      },
+      "supportedInputModalities": ["text", "image", "video"],
       "supportedOutputModalities": ["text"]
     },
     {
