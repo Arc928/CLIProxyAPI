@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 )
 
 func TestCodexClientModelsResponse_InputModalitiesFromRegistry(t *testing.T) {
@@ -393,7 +393,7 @@ func TestCodexClientModelsResponseAppliesMaxContextLengthOverride(t *testing.T) 
 
 	resp := BuildResponse([]map[string]any{
 		{"id": "deepseek-v4-flash", "max_context_length": wantOverride},
-		{"id": "deepseek-v4-pro"},
+		{"id": "custom-default-context-model"},
 		{"id": "gpt-5.5", "max_context_length": wantOverride},
 	}, nil, false)
 	models, ok := resp["models"].([]map[string]any)
@@ -411,7 +411,7 @@ func TestCodexClientModelsResponseAppliesMaxContextLengthOverride(t *testing.T) 
 		want int
 	}{
 		{slug: "deepseek-v4-flash", want: wantOverride},
-		{slug: "deepseek-v4-pro", want: wantDefault},
+		{slug: "custom-default-context-model", want: wantDefault},
 		{slug: "gpt-5.5", want: wantOverride},
 	} {
 		entry := bySlug[testCase.slug]
