@@ -96,6 +96,10 @@ type Service struct {
 	// coreManager handles core authentication and execution.
 	coreManager *coreauth.Manager
 
+	codeBuddyModelsMu      sync.Mutex
+	codeBuddyModelsCache   map[string]*codeBuddyModelCacheEntry
+	codeBuddyModelsContext context.Context
+
 	// cooldownStateStore persists runtime cooldown state when enabled.
 	cooldownStateStore coreauth.CooldownStateStore
 

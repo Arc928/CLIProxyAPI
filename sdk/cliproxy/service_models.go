@@ -169,7 +169,7 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 		models = registry.GetKimiModels()
 		models = applyExcludedModels(models, excluded)
 	case "codebuddy":
-		models = registry.GetCodeBuddyModels()
+		models = s.codeBuddyModelsForAuth(a)
 		models = applyExcludedModels(models, excluded)
 	case "xai":
 		models = registry.GetXAIModels()
@@ -315,6 +315,9 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 	if len(models) > 0 {
 		models = applyOAuthSettingsForAuth(s.cfg, provider, authKind, models)
 		s.registerResolvedModelsForAuth(a, key, applyModelPrefixes(models, a.Prefix, s.cfg != nil && s.cfg.ForceModelPrefix))
+		if strings.EqualFold(strings.TrimSpace(a.Provider), "codebuddy") {
+			s.scheduleCodeBuddyModelRefresh(ctx, a)
+		}
 		if strings.EqualFold(strings.TrimSpace(a.Provider), "antigravity") {
 			s.asyncProbeAntigravityCapabilities(ctx, a, key)
 		}
