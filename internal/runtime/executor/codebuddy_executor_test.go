@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	codebuddyauth "github.com/router-for-me/CLIProxyAPI/v8/internal/auth/codebuddy"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
@@ -65,148 +64,7 @@ func TestAggregateOpenAIChatSSE(t *testing.T) {
 	}
 }
 
-func TestCodeBuddyReasoningCoalescer(t *testing.T) {
-	var c codeBuddyReasoningCoalescer
-	if got := c.Push([]byte(`data: {"choices":[{"delta":{"reasoning_content":"The "}}]}`)); len(got) != 0 {
-		t.Fatalf("first reasoning chunk = %v, want buffered", got)
-	}
-	if got := c.Push([]byte(`data: {"choices":[{"delta":{"reasoning_content":"answer."}}]}`)); len(got) != 0 {
-		t.Fatalf("second reasoning chunk = %v, want buffered", got)
-	}
-	got := c.Push([]byte(`data: {"choices":[{"delta":{"content":"done"}}]}`))
-	if len(got) != 2 {
-		t.Fatalf("flushed chunks = %d, want 2", len(got))
-	}
-	if gjson.GetBytes(bytes.TrimSpace(bytes.TrimPrefix(got[0], []byte("data:"))), "choices.0.delta.reasoning_content").String() != "The answer." {
-		t.Fatalf("merged reasoning chunk = %s", got[0])
-	}
-	if !bytes.Contains(got[1], []byte(`"content":"done"`)) {
-		t.Fatalf("content chunk = %s", got[1])
-	}
-}
-
-// Hy4 emits an empty "tool_calls":[] in every delta; it must not block coalescing.
-func TestCodeBuddyReasoningCoalescerIgnoresEmptyToolCalls(t *testing.T) {
-	var c codeBuddyReasoningCoalescer
-	chunk := func(text string) []byte {
-		return []byte(`data: {"id":"cmb-1","model":"hy4-preview","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"","reasoning_content":"` + text + `","function_call":null,"refusal":"","tool_calls":[],"extra_fields":null},"logprobs":null,"finish_reason":""}],"usage":null}`)
-	}
-	if got := c.Push(chunk("We")); len(got) != 0 {
-		t.Fatalf("first chunk = %v, want buffered", got)
-	}
-	if got := c.Push(chunk(" need")); len(got) != 0 {
-		t.Fatalf("second chunk = %v, want buffered", got)
-	}
-	got := c.Flush()
-	if len(got) != 1 {
-		t.Fatalf("flushed = %d, want 1", len(got))
-	}
-	if merged := gjson.GetBytes(codeBuddySSEPayload(got[0]), "choices.0.delta.reasoning_content").String(); merged != "We need" {
-		t.Fatalf("merged reasoning = %q, want %q", merged, "We need")
-	}
-}
-
-func TestCodeBuddyReasoningCoalescerFlushesDone(t *testing.T) {
-	var c codeBuddyReasoningCoalescer
-	_ = c.Push([]byte(`data: {"choices":[{"delta":{"reasoning":"one"}}]}`))
-	got := c.Push([]byte("data: [DONE]"))
-	if len(got) != 2 || !bytes.Contains(got[0], []byte(`"reasoning":"one"`)) || !bytes.Equal(got[1], []byte("data: [DONE]")) {
-		t.Fatalf("done flush = %v", got)
-	}
-	if got := c.Flush(); len(got) != 0 {
-		t.Fatalf("buffer after done = %v", got)
-	}
-}
-
-// Zero-information chunks (empty reasoning deltas, usage-only frames) must be
-// forwarded without splitting the buffered reasoning stream.
-func TestCodeBuddyReasoningCoalescerIgnoresControlChunks(t *testing.T) {
-	var c codeBuddyReasoningCoalescer
-	if got := c.Push([]byte(`data: {"choices":[{"index":0,"delta":{"content":"","reasoning_content":"你","tool_calls":[]},"finish_reason":""}]}`)); len(got) != 0 {
-		t.Fatalf("reasoning chunk = %v, want buffered", got)
-	}
-	got := c.Push([]byte(`data: {"choices":[{"index":0,"delta":{"content":"","reasoning_content":"","tool_calls":[]},"finish_reason":""}],"usage":null}`))
-	if len(got) != 1 || !bytes.Contains(got[0], []byte(`"reasoning_content":""`)) {
-		t.Fatalf("empty reasoning delta = %v, want forwarded without flush", got)
-	}
-	got = c.Push([]byte(`data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}`))
-	if len(got) != 1 || !bytes.Contains(got[0], []byte(`"usage"`)) {
-		t.Fatalf("usage-only chunk = %v, want forwarded without flush", got)
-	}
-	if got := c.Push([]byte(`data: {"choices":[{"index":0,"delta":{"content":"","reasoning_content":"好","tool_calls":[]},"finish_reason":""}]}`)); len(got) != 0 {
-		t.Fatalf("reasoning after control chunks = %v, want buffered", got)
-	}
-	flushed := c.Flush()
-	if len(flushed) != 1 {
-		t.Fatalf("flushed = %d, want 1", len(flushed))
-	}
-	if merged := gjson.GetBytes(codeBuddySSEPayload(flushed[0]), "choices.0.delta.reasoning_content").String(); merged != "你好" {
-		t.Fatalf("merged reasoning = %q, want %q", merged, "你好")
-	}
-}
-
-func TestCodeBuddyReasoningCoalescerFlushesOnFinishReason(t *testing.T) {
-	var c codeBuddyReasoningCoalescer
-	if got := c.Push([]byte(`data: {"choices":[{"index":0,"delta":{"reasoning_content":"tail"}}]}`)); len(got) != 0 {
-		t.Fatalf("reasoning chunk = %v, want buffered", got)
-	}
-	got := c.Push([]byte(`data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}`))
-	if len(got) != 2 || !bytes.Contains(got[0], []byte(`"reasoning_content":"tail"`)) || !bytes.Contains(got[1], []byte(`"finish_reason":"stop"`)) {
-		t.Fatalf("finish_reason flush = %v", got)
-	}
-}
-
-// Buffers below the byte threshold must reach the client while the upstream is
-// still silent, instead of waiting for the stream to end.
-func TestCodeBuddyExecutorStreamFlushesReasoningOnIdle(t *testing.T) {
-	stall := 20 * codeBuddyReasoningIdleFlush
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		flusher, _ := w.(http.Flusher)
-		_, _ = io.WriteString(w, `data: {"id":"idle","model":"hy4-preview","choices":[{"index":0,"delta":{"content":"","reasoning_content":"thinking","tool_calls":[]}}]}`+"\n\n")
-		flusher.Flush()
-		time.Sleep(stall)
-		_, _ = io.WriteString(w, "data: [DONE]\n\n")
-		flusher.Flush()
-	}))
-	t.Cleanup(server.Close)
-
-	executor := NewCodeBuddyExecutor(&config.Config{})
-	result, err := executor.ExecuteStream(context.Background(), codebuddyTestAuth(server.URL), cliproxyexecutor.Request{
-		Model:   "hy4-preview",
-		Payload: []byte(`{"model":"hy4-preview","messages":[{"role":"user","content":"hi"}]}`),
-	}, cliproxyexecutor.Options{
-		SourceFormat:   sdktranslator.FormatOpenAI,
-		ResponseFormat: sdktranslator.FormatOpenAI,
-		Stream:         true,
-	})
-	if err != nil {
-		t.Fatalf("ExecuteStream: %v", err)
-	}
-	start := time.Now()
-	first, open := <-result.Chunks
-	elapsed := time.Since(start)
-	if !open {
-		t.Fatalf("stream closed without chunks")
-	}
-	if first.Err != nil {
-		t.Fatalf("first chunk error: %v", first.Err)
-	}
-	if elapsed > stall/2 {
-		t.Fatalf("first chunk arrived after %v, want it released once the upstream idled", elapsed)
-	}
-	if got := gjson.GetBytes(first.Payload, "choices.0.delta.reasoning_content").String(); got != "thinking" {
-		t.Fatalf("first chunk = %s, want the idle reasoning batch", first.Payload)
-	}
-	for streamChunk := range result.Chunks {
-		if streamChunk.Err != nil {
-			t.Fatalf("stream chunk error: %v", streamChunk.Err)
-		}
-	}
-}
-
-// Upstreams that do not stamp an empty tool_calls array on their deltas must be
-// forwarded untouched: no stripping and no reasoning coalescing.
+// Reasoning deltas are forwarded one-to-one without coalescing.
 func TestCodeBuddyExecutorStreamLeavesPlainDeltasAlone(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -292,50 +150,8 @@ func TestCodeBuddyExecutorStreamMovesThinkingTagsOutOfContent(t *testing.T) {
 	}
 }
 
-func TestCodeBuddyDeltaShape(t *testing.T) {
-	if hasDelta, empty := codeBuddyDeltaShape([]byte(`data: {"choices":[{"delta":{"content":"x","tool_calls":[]}}]}`)); !hasDelta || !empty {
-		t.Fatalf("empty tool_calls delta = %v/%v, want true/true", hasDelta, empty)
-	}
-	if hasDelta, empty := codeBuddyDeltaShape([]byte(`data: {"choices":[{"delta":{"content":"x","tool_calls":[{"index":0}]}}]}`)); !hasDelta || empty {
-		t.Fatalf("populated tool_calls delta = %v/%v, want true/false", hasDelta, empty)
-	}
-	if hasDelta, empty := codeBuddyDeltaShape([]byte(`data: {"choices":[{"delta":{"content":"x"}}]}`)); !hasDelta || empty {
-		t.Fatalf("plain delta = %v/%v, want true/false", hasDelta, empty)
-	}
-	if hasDelta, _ := codeBuddyDeltaShape([]byte("data: [DONE]")); hasDelta {
-		t.Fatalf("[DONE] should not count as a delta")
-	}
-	if hasDelta, _ := codeBuddyDeltaShape([]byte(": ping")); hasDelta {
-		t.Fatalf("SSE comment should not count as a delta")
-	}
-}
-
-func TestCodeBuddyStripEmptyToolCalls(t *testing.T) {
-	raw := []byte(`data: {"id":"c1","choices":[{"index":0,"delta":{"content":"","reasoning_content":"t","function_call":null,"tool_calls":[]},"finish_reason":""}],"usage":null}`)
-	got := codeBuddyStripEmptyToolCalls(raw)
-	if bytes.Contains(got, []byte("tool_calls")) {
-		t.Fatalf("empty tool_calls not stripped: %s", got)
-	}
-	if !bytes.HasPrefix(got, []byte("data: ")) {
-		t.Fatalf("SSE framing lost: %s", got)
-	}
-	if g := gjson.GetBytes(codeBuddySSEPayload(got), "choices.0.delta.reasoning_content").String(); g != "t" {
-		t.Fatalf("reasoning_content = %q, want t", g)
-	}
-	keep := []byte(`data: {"choices":[{"index":0,"delta":{"tool_calls":[{"id":"c1","type":"function","function":{"name":"bash","arguments":"x"},"index":0}]}}]}`)
-	if out := codeBuddyStripEmptyToolCalls(keep); !bytes.Contains(out, []byte(`"tool_calls"`)) {
-		t.Fatalf("non-empty tool_calls must be preserved: %s", out)
-	}
-	done := []byte("data: [DONE]")
-	if got := codeBuddyStripEmptyToolCalls(done); !bytes.Equal(got, done) {
-		t.Fatalf("[DONE] line changed: %s", got)
-	}
-}
-
-// Hy4 attaches an empty "tool_calls":[] to every delta; Responses clients must
-// still see a single reasoning item lifecycle rather than one per coalesced
-// chunk. Reasoning text exceeds the 512-byte coalescing threshold twice so
-// multiple reasoning chunks actually flow downstream.
+// Deltas carrying an empty "tool_calls":[] must not split reasoning into
+// several items for Responses clients.
 func TestCodeBuddyExecutorStreamResponsesKeepsSingleReasoningItem(t *testing.T) {
 	hy4Reasoning := func(text string) string {
 		return `data: {"id":"cmb-t1","model":"hy4-preview","object":"chat.completion.chunk","created":1,"choices":[{"index":0,"delta":{"content":"","reasoning_content":"` + text + `","function_call":null,"refusal":"","tool_calls":[],"extra_fields":null},"logprobs":null,"finish_reason":""}],"usage":null}` + "\n\n"
