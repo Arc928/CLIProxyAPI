@@ -252,6 +252,46 @@ func TestCodeBuddyExecutorStreamLeavesPlainDeltasAlone(t *testing.T) {
 	}
 }
 
+func TestCodeBuddyExecutorStreamMovesThinkingTagsOutOfContent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, `data: {"id":"tagged","model":"glm-5.2","choices":[{"index":0,"delta":{"content":"<thinking>plan"}}]}`+"\n\n")
+		_, _ = io.WriteString(w, `data: {"choices":[{"index":0,"delta":{"content":" step</thinking>answer"}}]}`+"\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	t.Cleanup(server.Close)
+
+	executor := NewCodeBuddyExecutor(&config.Config{})
+	result, err := executor.ExecuteStream(context.Background(), codebuddyTestAuth(server.URL), cliproxyexecutor.Request{
+		Model:   "glm-5.2",
+		Payload: []byte(`{"model":"glm-5.2","messages":[{"role":"user","content":"hi"}]}`),
+	}, cliproxyexecutor.Options{
+		SourceFormat:   sdktranslator.FormatOpenAI,
+		ResponseFormat: sdktranslator.FormatOpenAI,
+		Stream:         true,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteStream: %v", err)
+	}
+	var content, reasoning string
+	for chunk := range result.Chunks {
+		if chunk.Err != nil {
+			t.Fatalf("stream chunk error: %v", chunk.Err)
+		}
+		content += gjson.GetBytes(chunk.Payload, "choices.0.delta.content").String()
+		reasoning += gjson.GetBytes(chunk.Payload, "choices.0.delta.reasoning_content").String()
+		if bytes.Contains(chunk.Payload, []byte("<thinking>")) || bytes.Contains(chunk.Payload, []byte("</thinking>")) {
+			t.Fatalf("thinking tags leaked in downstream chunk: %s", chunk.Payload)
+		}
+	}
+	if content != "answer" {
+		t.Fatalf("visible content = %q, want answer", content)
+	}
+	if reasoning != "plan step" {
+		t.Fatalf("reasoning content = %q, want plan step", reasoning)
+	}
+}
+
 func TestCodeBuddyDeltaShape(t *testing.T) {
 	if hasDelta, empty := codeBuddyDeltaShape([]byte(`data: {"choices":[{"delta":{"content":"x","tool_calls":[]}}]}`)); !hasDelta || !empty {
 		t.Fatalf("empty tool_calls delta = %v/%v, want true/true", hasDelta, empty)

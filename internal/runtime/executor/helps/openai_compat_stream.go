@@ -1,6 +1,7 @@
 package helps
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 
@@ -101,6 +102,27 @@ func NormalizeOpenAICompatStreamPayload(rawJSON []byte, state *OpenAICompatStrea
 		return true
 	})
 	return out
+}
+
+// NormalizeOpenAICompatStreamLine normalizes one OpenAI-compatible SSE data line
+// while preserving its SSE framing for downstream translators.
+func NormalizeOpenAICompatStreamLine(rawLine []byte, state *OpenAICompatStreamState) []byte {
+	trimmed := strings.TrimSpace(string(rawLine))
+	if !strings.HasPrefix(trimmed, "data:") {
+		return rawLine
+	}
+	payload := strings.TrimSpace(strings.TrimPrefix(trimmed, "data:"))
+	if payload == "[DONE]" {
+		if synthetic := SyntheticOpenAICompatReasoningFinishChunk(state); len(synthetic) > 0 {
+			return append([]byte("data: "), synthetic...)
+		}
+		return rawLine
+	}
+	normalized := NormalizeOpenAICompatStreamPayload([]byte(payload), state)
+	if bytes.Equal(normalized, []byte(payload)) {
+		return rawLine
+	}
+	return append([]byte("data: "), normalized...)
 }
 
 func SyntheticOpenAICompatReasoningFinishChunk(state *OpenAICompatStreamState) []byte {

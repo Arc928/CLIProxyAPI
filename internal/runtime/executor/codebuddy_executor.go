@@ -115,6 +115,7 @@ func (e *CodeBuddyExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth
 		err = errUpstream
 		return resp, err
 	}
+	data = helps.NormalizeOpenAICompatNonStreamPayload(data, helps.NewOpenAICompatStreamState())
 	reporter.Publish(ctx, helps.ParseOpenAIUsage(data))
 	reporter.EnsurePublished(ctx)
 
@@ -174,6 +175,7 @@ func (e *CodeBuddyExecutor) ExecuteStream(ctx context.Context, auth *cliproxyaut
 		claudeInputTokens := helps.NewClaudeInputTokenState(from, to, responseFormat, originalPayload)
 		var param any
 		var streamUsage helps.StreamUsageBuffer
+		streamState := helps.NewOpenAICompatStreamState()
 		var reasoningCoalescer codeBuddyReasoningCoalescer
 		defer streamUsage.Publish(ctx, reporter)
 
@@ -209,7 +211,8 @@ func (e *CodeBuddyExecutor) ExecuteStream(ctx context.Context, auth *cliproxyaut
 		defer idle.Stop()
 
 		emit := func(line []byte) bool {
-			chunks := helps.TranslateStreamWithClaudeInputTokens(ctx, to, responseFormat, req.Model, opts.OriginalRequest, body, normalizeStream(line), &param, claudeInputTokens)
+			normalized := helps.NormalizeOpenAICompatStreamLine(normalizeStream(line), streamState)
+			chunks := helps.TranslateStreamWithClaudeInputTokens(ctx, to, responseFormat, req.Model, opts.OriginalRequest, body, normalized, &param, claudeInputTokens)
 			for i := range chunks {
 				select {
 				case out <- cliproxyexecutor.StreamChunk{Payload: chunks[i]}:
@@ -288,7 +291,8 @@ func (e *CodeBuddyExecutor) ExecuteStream(ctx context.Context, auth *cliproxyaut
 		case <-ctx.Done():
 			return
 		}
-		doneChunks := helps.TranslateStreamWithClaudeInputTokens(ctx, to, responseFormat, req.Model, opts.OriginalRequest, body, []byte("[DONE]"), &param, claudeInputTokens)
+		doneLine := helps.NormalizeOpenAICompatStreamLine([]byte("data: [DONE]"), streamState)
+		doneChunks := helps.TranslateStreamWithClaudeInputTokens(ctx, to, responseFormat, req.Model, opts.OriginalRequest, body, doneLine, &param, claudeInputTokens)
 		for i := range doneChunks {
 			select {
 			case out <- cliproxyexecutor.StreamChunk{Payload: doneChunks[i]}:

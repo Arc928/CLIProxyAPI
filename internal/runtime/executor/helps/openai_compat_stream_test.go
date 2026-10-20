@@ -1,6 +1,7 @@
 package helps
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/tidwall/gjson"
@@ -25,6 +26,21 @@ func TestNormalizeOpenAICompatStreamPayloadMovesThinkingTagsAcrossChunks(t *test
 	}
 	if reasoning != "plan step" {
 		t.Fatalf("reasoning content = %q, want %q", reasoning, "plan step")
+	}
+}
+
+func TestNormalizeOpenAICompatStreamLinePreservesSSEFraming(t *testing.T) {
+	state := NewOpenAICompatStreamState()
+	out := NormalizeOpenAICompatStreamLine([]byte(`data: {"choices":[{"index":0,"delta":{"content":"<thinking>plan</thinking>answer"}}]}`), state)
+	payload := bytes.TrimSpace(bytes.TrimPrefix(out, []byte("data:")))
+	if got := gjson.GetBytes(payload, "choices.0.delta.content").String(); got != "answer" {
+		t.Fatalf("visible content = %q, want answer", got)
+	}
+	if got := gjson.GetBytes(payload, "choices.0.delta.reasoning_content").String(); got != "plan" {
+		t.Fatalf("reasoning content = %q, want plan", got)
+	}
+	if string(out[:len("data: ")]) != "data: " {
+		t.Fatalf("SSE framing = %q, want data prefix", out)
 	}
 }
 
