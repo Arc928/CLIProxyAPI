@@ -16,6 +16,12 @@ go build -o test-output ./cmd/server && rm test-output # Verify compile (REQUIRE
 ```
 - Common flags: `--config <path>`, `--tui`, `--standalone`, `--local-model`, `--no-browser`, `--oauth-callback-port <port>`
 
+## Cursor Cloud specific instructions
+- Cloud Agent `start` runs `~/.local/bin/cli-proxy-api` on `127.0.0.1:8317` with `--local-model`. The API key is `local-dev-key`. Config and auth files are under `~/.cli-proxy-api-dev/`, outside the git checkout. `GET /` returns the server banner. `GET /v1/models` needs `Authorization: Bearer local-dev-key` and returns an empty list until provider credentials exist.
+- `install` runs `go mod download` and `CGO_ENABLED=1 go build -o "$HOME/.local/bin/cli-proxy-api" ./cmd/server`. Rebuild that binary after server changes; the boot binary comes from the default-branch install.
+- API keys `your-api-key-1`, `your-api-key-2`, and `your-api-key-3` (the `config.example.yaml` placeholders) turn on example-key safe mode and reject `/v1/*` with HTTP 403. Use a different key, such as `local-dev-key`, for local requests.
+- `go test ./...` is the full suite and does not need provider credentials. `gcc` is required because the server build enables CGO.
+
 ## Config
 - Default config: `config.yaml` (template: `config.example.yaml`)
 - `.env` is auto-loaded from the working directory
